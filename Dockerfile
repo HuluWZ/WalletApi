@@ -9,7 +9,7 @@ RUN dotnet restore src/WalletApi.Api
 COPY src src
 RUN dotnet publish src/WalletApi.Api -c Release -o /out --no-restore
 
-FROM mcr.microsoft.com/dotnet/aspnet:9.0
+FROM mcr.microsoft.com/dotnet/aspnet:10.0
 WORKDIR /app
 COPY --from=build /out .
 USER $APP_UID
