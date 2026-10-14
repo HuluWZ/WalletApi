@@ -1,0 +1,28 @@
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using WalletApi.Application.Scheduling;
+
+namespace WalletApi.Infrastructure.Background;
+
+public class ScheduledTransferWorker(IServiceScopeFactory scopes, IConfiguration cfg, ILogger<ScheduledTransferWorker> log) : BackgroundService
+{
+    protected override async Task ExecuteAsync(CancellationToken ct)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(cfg.GetValue("Scheduler:TickSeconds", 30)));
+        do
+        {
+            try
+            {
+                using var scope = scopes.CreateScope();
+                var ran = await scope.ServiceProvider.GetRequiredService<ScheduledTransferService>().RunDueAsync(DateTime.UtcNow);
+                if (ran > 0) log.LogInformation("Processed {Count} scheduled transfers", ran);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                log.LogError(ex, "Scheduled transfer run failed"); // next tick retries
+            }
+        } while (await timer.WaitForNextTickAsync(ct));
+    }
+}

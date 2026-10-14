@@ -1,0 +1,40 @@
+name: CI
+on:
+  push: { branches: [main] }
+  pull_request:
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env: { POSTGRES_PASSWORD: postgres, POSTGRES_DB: wallet }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 3s --health-retries 10
+    env:
+      Scheduler__TickSeconds: "2"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with: { global-json-file: global.json }
+      - run: dotnet restore --locked-mode || dotnet restore
+      - run: dotnet format --verify-no-changes --no-restore
+      - run: dotnet build -c Release --no-restore
+      - run: dotnet test -c Release --no-build --collect:"XPlat Code Coverage"
+      - name: Smoke test against real Postgres
+        run: |
+          dotnet run -c Release --no-build --project src/WalletApi.Api --urls http://localhost:8080 &
+          sleep 8
+          bash scripts/smoke.sh http://localhost:8080
+  docker:
+    needs: build-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t walletapi .
