@@ -22,7 +22,7 @@ jobs:
       Seed__RegulatorEmail: regulator@wallet.local
       Seed__RegulatorPassword: Regulator#12345
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-dotnet@v4
         with: { global-json-file: global.json }
       - run: dotnet restore --locked-mode || dotnet restore
@@ -38,5 +38,5 @@ jobs:
     needs: build-test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: docker build -t walletapi .
