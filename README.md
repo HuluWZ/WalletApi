@@ -13,6 +13,93 @@ Clean Architecture, inward-only dependencies (see [ADR 1](docs/adr/0001-clean-ar
 
 Repo standards: central package management, `global.json`, `.editorconfig` + warnings-as-errors, ADRs, CODEOWNERS, PR template, Dependabot, CI (format, build, test, Postgres smoke test, Docker build).
 
+## Diagrams
+
+### System overview
+```mermaid
+flowchart LR
+    C[Customer app / Swagger UI] -->|JWT| API
+    R[Regulator dashboard] -->|JWT, Regulator role| API
+    subgraph Service
+        API[Api<br/>controllers] --> APP[Application<br/>use cases]
+        APP --> DOM[Domain<br/>entities and rules]
+        INF[Infrastructure<br/>EF Core, JWT, workers] -.implements ports.-> APP
+        API --> INF
+        W[Background worker<br/>every N seconds] --> APP
+    end
+    INF --> DB[(PostgreSQL)]
+```
+
+### Layer dependencies (inward only)
+```mermaid
+flowchart LR
+    Api --> Infrastructure --> Application --> Domain
+```
+
+### Transfer: idempotent, atomic, flagged in the same commit
+```mermaid
+sequenceDiagram
+    participant U as Client
+    participant A as AccountsController
+    participant T as TransferService
+    participant K as ComplianceService
+    participant D as PostgreSQL
+    U->>A: POST /transfers (Idempotency-Key)
+    A->>T: TransferAsync
+    T->>D: key already used?
+    alt replay
+        D-->>T: existing transfer
+        T-->>U: 200 same result, no second debit
+    else new
+        T->>K: EvaluateAsync (rules vs 24h history)
+        K-->>T: flags added to the unit of work
+        T->>D: SaveChanges: balances + transfer + flags (xmin concurrency check)
+        D-->>U: 201 Created
+    end
+```
+
+### Data model
+```mermaid
+erDiagram
+    USER ||--o{ ACCOUNT : owns
+    ACCOUNT ||--o{ TRANSFER : "sends / receives"
+    TRANSFER ||--o{ COMPLIANCE_FLAG : "may raise"
+    USER ||--o{ SCHEDULED_TRANSFER : creates
+    USER ||--o{ LOAN : borrows
+    LOAN ||--|{ LOAN_INSTALLMENT : "repaid by"
+    USER ||--o{ CREDIT_SCORE_SNAPSHOT : "daily score"
+    USER { guid Id string Email string Role }
+    ACCOUNT { guid Id long Balance }
+    TRANSFER { guid Id string IdempotencyKey long Amount string Type }
+    COMPLIANCE_FLAG { guid Id string Rule string Status }
+    LOAN { guid Id long Principal decimal AnnualRatePercent string Status }
+```
+
+### Credit score to loan offer
+```mermaid
+flowchart LR
+    TX[Transactions<br/>+ repayments] --> F[6 weighted factors<br/>repayment 30, income 20,<br/>savings 15, cushion 15,<br/>age 10, activity 10]
+    F --> S[Score 300-850<br/>+ reason per factor]
+    S --> B{Score >= 580<br/>and account >= 30 days?}
+    B -- no --> N[No offer, reason shown]
+    B -- yes --> O[Limit and APR by band<br/>580 / 670 / 740 / 800]
+    O --> L[Apply: amortized installments]
+    L --> AP[Worker autopay<br/>30 days overdue = default]
+    AP -->|repayment history| TX
+```
+
+### Compliance monitoring
+```mermaid
+flowchart TD
+    T[Transaction] --> R1{Amount over single threshold?}
+    T --> R2{24h outgoing total over daily threshold?}
+    T --> R3{3+ transfers just under threshold in 24h?}
+    T --> R4{80%+ of money received sent on within 1h?}
+    R1 & R2 & R3 & R4 -->|yes| F[(Open flag, saved with the transaction)]
+    F --> REG[Regulator: Dismiss or Escalate + note]
+    F --> G[Dashboard: volume and flags per day,<br/>transfer network graph]
+```
+
 ## Run
     Swagger UI: http://localhost:8080/swagger       Dashboard: http://localhost:8080/dashboard.html
     Seeded regulator (compose only): regulator@wallet.local / Regulator#12345
