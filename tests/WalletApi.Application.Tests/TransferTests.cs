@@ -5,7 +5,7 @@ namespace WalletApi.Application.Tests;
 public class TransferTests : IDisposable
 {
     readonly TestDb t = new();
-    TransferService Svc => new(t.Db);
+    TransferService Svc => t.Transfers;
 
     public void Dispose() => t.Dispose();
 

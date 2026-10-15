@@ -10,4 +10,6 @@ services:
       ConnectionStrings__Default: Host=db;Database=wallet;Username=postgres;Password=postgres
       Jwt__Key: change-me-change-me-change-me-32chars
       Scheduler__TickSeconds: "2"
+      Seed__RegulatorEmail: regulator@wallet.local
+      Seed__RegulatorPassword: Regulator#12345
     depends_on: { db: { condition: service_healthy } }

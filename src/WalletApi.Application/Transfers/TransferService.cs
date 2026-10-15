@@ -1,12 +1,13 @@
 using Microsoft.EntityFrameworkCore;
 using WalletApi.Application.Abstractions;
+using WalletApi.Application.Compliance;
 using WalletApi.Domain;
 
 namespace WalletApi.Application.Transfers;
 
 public record TransferResult(Transfer? Transfer, string? Error, bool Replayed = false);
 
-public class TransferService(IWalletDb db)
+public class TransferService(IWalletDb db, ComplianceService compliance)
 {
     public const string ConcurrentError = "Concurrent update, retry";
 
@@ -27,6 +28,7 @@ public class TransferService(IWalletDb db)
         dst.Balance += amount;
         var t = new Transfer { IdempotencyKey = key, FromAccountId = from, ToAccountId = to, Amount = amount };
         db.Transfers.Add(t);
+        await compliance.EvaluateAsync(t); // flags commit atomically with the transfer
         try
         {
             await db.SaveChangesAsync(); // one atomic unit; Version check rejects concurrent edits
@@ -45,6 +47,27 @@ public class TransferService(IWalletDb db)
             throw;
         }
         return new(t, null);
+    }
+
+    public async Task<(Account? Account, string? Error)> DepositAsync(Guid userId, Guid accountId, long amount)
+    {
+        if (amount <= 0) return (null, "Amount must be positive");
+        var acc = await db.Accounts.FirstOrDefaultAsync(a => a.Id == accountId && a.UserId == userId);
+        if (acc is null) return (null, "Account not found");
+        acc.Balance += amount;
+        var t = new Transfer { IdempotencyKey = $"dep-{Guid.NewGuid()}", ToAccountId = accountId, Amount = amount, Type = TxType.Deposit };
+        db.Transfers.Add(t);
+        await compliance.EvaluateAsync(t);
+        try
+        {
+            await db.SaveChangesAsync();
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            db.ChangeTracker.Clear();
+            return (null, ConcurrentError);
+        }
+        return (acc, null);
     }
 
     public Task<long> TotalBalanceAsync() => db.Accounts.SumAsync(a => a.Balance);

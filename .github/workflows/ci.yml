@@ -19,6 +19,8 @@ jobs:
           --health-cmd "pg_isready -U postgres" --health-interval 3s --health-retries 10
     env:
       Scheduler__TickSeconds: "2"
+      Seed__RegulatorEmail: regulator@wallet.local
+      Seed__RegulatorPassword: Regulator#12345
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4

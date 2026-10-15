@@ -22,12 +22,9 @@ public class AccountsController(IWalletDb db, TransferService transfers) : Contr
     [HttpPost("{id:guid}/deposit")]
     public async Task<IActionResult> Deposit(Guid id, DepositRequest r)
     {
-        if (r.Amount <= 0) return BadRequest("Amount must be positive");
-        var acc = await db.Accounts.FirstOrDefaultAsync(a => a.Id == id && a.UserId == UserId);
-        if (acc is null) return NotFound();
-        acc.Balance += r.Amount;
-        await db.SaveChangesAsync();
-        return Ok(new { acc.Id, acc.Balance });
+        var (acc, error) = await transfers.DepositAsync(UserId, id, r.Amount);
+        if (error is null) return Ok(new { acc!.Id, acc.Balance });
+        return error == "Account not found" ? NotFound() : error == TransferService.ConcurrentError ? Conflict(error) : BadRequest(error);
     }
 
     [HttpPost("transfers")]

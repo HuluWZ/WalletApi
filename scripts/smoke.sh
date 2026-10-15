@@ -21,4 +21,20 @@ curl -sf -X POST $B/api/scheduled-transfers -H "Authorization: Bearer $T1" -H 'C
   -d "{\"fromAccountId\":\"$A\",\"toAccountId\":\"$C\",\"amount\":100,\"interval\":\"Daily\",\"firstRunAt\":\"$(python3 -c "import datetime as d;print((d.datetime.utcnow()+d.timedelta(seconds=3)).strftime('%Y-%m-%dT%H:%M:%SZ'))")\"}" >/dev/null
 sleep 9
 BAL=$(curl -sf $B/api/accounts -H "Authorization: Bearer $T1" | j "[0]['balance']")
-[ "$BAL" = "600" ] && echo "SMOKE OK (transfer + scheduled payment, balance $BAL)" || { echo "SMOKE FAIL: balance $BAL, expected 600"; exit 1; }
+[ "$BAL" = "600" ] || { echo "SMOKE FAIL: balance $BAL, expected 600"; exit 1; }
+
+# swagger + credit score
+curl -sf $B/swagger/v1/swagger.json >/dev/null || { echo "SMOKE FAIL: swagger"; exit 1; }
+SCORE=$(curl -sf $B/api/credit/score -H "Authorization: Bearer $T1" | j "['score']")
+[ "$SCORE" -ge 300 ] && [ "$SCORE" -le 850 ] || { echo "SMOKE FAIL: score $SCORE"; exit 1; }
+
+# compliance: a large deposit must be flagged and visible to the regulator only
+curl -sf -X POST $B/api/accounts/$A/deposit -H "Authorization: Bearer $T1" -H 'Content-Type: application/json' -d '{"amount":5000000}' >/dev/null
+code=$(curl -s -o /dev/null -w '%{http_code}' $B/api/compliance/flags -H "Authorization: Bearer $T1")
+[ "$code" = "403" ] || { echo "SMOKE FAIL: customer got $code on regulator endpoint"; exit 1; }
+RT=$(curl -sf -X POST $B/api/auth/login -H 'Content-Type: application/json' -d '{"email":"regulator@wallet.local","password":"Regulator#12345"}' | j "['token']")
+N=$(curl -sf $B/api/compliance/flags -H "Authorization: Bearer $RT" | python3 -c "import sys,json;print(sum(1 for f in json.load(sys.stdin) if f['rule']=='LargeTransaction'))")
+[ "$N" -ge 1 ] || { echo "SMOKE FAIL: no large-transaction flag"; exit 1; }
+curl -sf $B/api/compliance/network -H "Authorization: Bearer $RT" >/dev/null && curl -sf $B/api/compliance/stats -H "Authorization: Bearer $RT" >/dev/null || { echo "SMOKE FAIL: graph endpoints"; exit 1; }
+curl -sf $B/dashboard.html >/dev/null || { echo "SMOKE FAIL: dashboard"; exit 1; }
+echo "SMOKE OK (transfer, scheduled payment, swagger, credit score $SCORE, regulator flag, graphs)"

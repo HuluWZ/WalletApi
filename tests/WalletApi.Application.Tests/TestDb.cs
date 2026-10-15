@@ -13,6 +13,7 @@ public sealed class TestDb : IDisposable
     public Guid UserId { get; } = Guid.NewGuid();
     public Account A { get; }
     public Account B { get; }
+    public WalletApi.Application.Transfers.TransferService Transfers => new(Db, new WalletApi.Application.Compliance.ComplianceService(Db, new WalletApi.Application.Compliance.ComplianceOptions()));
 
     public TestDb()
     {

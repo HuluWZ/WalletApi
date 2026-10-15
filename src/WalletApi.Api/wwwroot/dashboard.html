@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wallet Dashboard</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --text:#1c2430; --muted:#667085; --line:#e4e7ec; --accent:#2f6fed; --bad:#d92d20; --good:#12805c; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#12151b; --card:#1b2029; --text:#e8ebf0; --muted:#98a2b3; --line:#2a303b; --accent:#6f9bff; --bad:#ff6b5f; --good:#4cc79a; } }
+  * { box-sizing:border-box } body { margin:0; font:15px/1.5 system-ui,sans-serif; background:var(--bg); color:var(--text) }
+  main { max-width:1100px; margin:0 auto; padding:16px }
+  h1 { font-size:20px } h2 { font-size:16px; margin:0 0 8px }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; margin-bottom:16px }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:16px }
+  input, button { font:inherit; padding:8px 10px; border-radius:6px; border:1px solid var(--line); background:var(--card); color:var(--text) }
+  button { cursor:pointer; background:var(--accent); color:#fff; border:0 } button.alt { background:transparent; color:var(--text); border:1px solid var(--line) }
+  .score { font-size:56px; font-weight:700; line-height:1 } .muted { color:var(--muted) } .bad { color:var(--bad) }
+  table { width:100%; border-collapse:collapse; font-size:14px } td, th { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line) }
+  #network { height:420px; border:1px solid var(--line); border-radius:8px }
+  .hidden { display:none } canvas { max-height:260px }
+</style>
+</head>
+<body>
+<main>
+  <h1>Wallet Dashboard</h1>
+
+  <section id="login" class="card">
+    <h2>Sign in</h2>
+    <form id="loginForm" style="display:flex;gap:8px;flex-wrap:wrap">
+      <input id="email" type="email" placeholder="Email" autocomplete="username" required>
+      <input id="password" type="password" placeholder="Password" autocomplete="current-password" required>
+      <button>Sign in</button>
+    </form>
+    <p id="loginError" class="bad"></p>
+  </section>
+
+  <div id="app" class="hidden">
+    <p><span id="who" class="muted"></span> <button class="alt" id="logout">Sign out</button></p>
+
+    <section id="credit" class="hidden">
+      <div class="grid">
+        <div class="card">
+          <h2>Credit score</h2>
+          <div class="score" id="score">-</div>
+          <div id="band" class="muted"></div>
+          <p id="offer" class="muted"></p>
+        </div>
+        <div class="card"><h2>Score trend</h2><canvas id="trend"></canvas></div>
+      </div>
+      <div class="card"><h2>What drives your score</h2><canvas id="factors"></canvas><ul id="reasons" class="muted"></ul></div>
+    </section>
+
+    <section id="regulator" class="hidden">
+      <div class="card"><h2>Volume and flags per day (30 days)</h2><canvas id="stats"></canvas></div>
+      <div class="card">
+        <h2>Transfer network <span class="muted">(red = flagged account or edge; edge width = amount)</span></h2>
+        <div id="network"></div>
+      </div>
+      <div class="card">
+        <h2>Flags</h2>
+        <table><thead><tr><th>When</th><th>Rule</th><th>Details</th><th>Status</th><th></th></tr></thead><tbody id="flags"></tbody></table>
+      </div>
+    </section>
+  </div>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.9/standalone/umd/vis-network.min.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+let token = null;
+const charts = {};
+const money = c => (c / 100).toLocaleString(undefined, { minimumFractionDigits: 2 });
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, { ...opts, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token, ...(opts.headers || {}) } });
+  if (!r.ok) throw new Error(r.status);
+  return r.status === 204 ? null : r.json();
+}
+function draw(id, cfg) { charts[id]?.destroy(); charts[id] = new Chart($(id), cfg); }
+
+$('loginForm').onsubmit = async e => {
+  e.preventDefault();
+  $('loginError').textContent = '';
+  try {
+    const r = await fetch('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: $('email').value, password: $('password').value }) });
+    if (!r.ok) throw new Error();
+    token = (await r.json()).token;
+    start();
+  } catch { $('loginError').textContent = 'Sign in failed'; }
+};
+$('logout').onclick = () => location.reload();
+
+function role() {
+  const p = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+  return p.role || p['http://schemas.microsoft.com/ws/2008/06/identity/claims/role'];
+}
+
+async function start() {
+  $('login').classList.add('hidden'); $('app').classList.remove('hidden');
+  const regulator = role() === 'Regulator';
+  $('who').textContent = $('email').value + ' (' + (regulator ? 'Regulator' : 'Customer') + ')';
+  if (regulator) { $('regulator').classList.remove('hidden'); await loadRegulator(); }
+  else { $('credit').classList.remove('hidden'); await loadCredit(); }
+}
+
+async function loadCredit() {
+  const [s, h, offer] = await Promise.all([api('/api/credit/score'), api('/api/credit/history'), api('/api/loans/offer')]);
+  $('score').textContent = s.score; $('band').textContent = s.band;
+  $('offer').textContent = offer.eligible ? `Loan offer: up to ${money(offer.limit)} at ${offer.annualRatePercent}% APR` : offer.reason;
+  draw('trend', { type: 'line', data: { labels: h.map(x => x.day.slice(0, 10)), datasets: [{ label: 'Score', data: h.map(x => x.score), borderColor: css('--accent'), tension: .25 }] }, options: { scales: { y: { min: 300, max: 850 } } } });
+  draw('factors', { type: 'bar', data: { labels: s.factors.map(f => `${f.name} (${f.weightPercent}%)`), datasets: [
+    { label: 'Points earned', data: s.factors.map(f => f.points), backgroundColor: css('--accent') },
+    { label: 'Points possible', data: s.factors.map(f => f.weightPercent / 100 * 550), backgroundColor: css('--line') }] }, options: { indexAxis: 'y' } });
+  $('reasons').replaceChildren(...s.factors.map(f => Object.assign(document.createElement('li'), { textContent: `${f.name}: ${f.reason}` })));
+}
+
+async function loadRegulator() {
+  const [stats, net, flags] = await Promise.all([api('/api/compliance/stats?days=30'), api('/api/compliance/network?days=30'), api('/api/compliance/flags')]);
+  draw('stats', { data: { labels: stats.map(d => d.day.slice(5, 10)), datasets: [
+    { type: 'bar', label: 'Volume', data: stats.map(d => d.volume / 100), backgroundColor: css('--accent'), yAxisID: 'y' },
+    { type: 'line', label: 'Flags', data: stats.map(d => d.flags), borderColor: css('--bad'), yAxisID: 'y1' }] },
+    options: { scales: { y: { position: 'left' }, y1: { position: 'right', beginAtZero: true, ticks: { precision: 0 }, grid: { drawOnChartArea: false } } } } });
+
+  const max = Math.max(1, ...net.edges.map(e => e.total));
+  new vis.Network($('network'), {
+    nodes: new vis.DataSet(net.nodes.map(n => ({ id: n.id, label: n.label, color: n.flagged ? css('--bad') : css('--accent'), font: { color: '#fff' } }))),
+    edges: new vis.DataSet(net.edges.map(e => ({ from: e.from, to: e.to, arrows: 'to', width: 1 + 6 * e.total / max, color: e.flagged ? css('--bad') : css('--muted'), title: `${money(e.total)} in ${e.count} transfers` }))),
+  }, { physics: { stabilization: true }, interaction: { hover: true } });
+
+  const rows = flags.map(f => {
+    const tr = document.createElement('tr');
+    for (const v of [f.createdAt.slice(0, 16).replace('T', ' '), f.rule, f.details, f.status]) tr.append(Object.assign(document.createElement('td'), { textContent: v }));
+    const td = document.createElement('td');
+    if (f.status === 'Open') for (const s of ['Dismissed', 'Escalated']) {
+      const b = Object.assign(document.createElement('button'), { textContent: s, className: 'alt' });
+      b.onclick = async () => { await api(`/api/compliance/flags/${f.id}/review`, { method: 'POST', body: JSON.stringify({ status: s, note: null }) }); loadRegulator(); };
+      td.append(b, ' ');
+    }
+    tr.append(td);
+    return tr;
+  });
+  $('flags').replaceChildren(...rows);
+}
+</script>
+</body>
+</html>

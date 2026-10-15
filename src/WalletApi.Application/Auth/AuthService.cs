@@ -14,13 +14,13 @@ public class AuthService(IWalletDb db, ITokenService tokens)
         db.Users.Add(user);
         db.Accounts.Add(new Account { UserId = user.Id });
         await db.SaveChangesAsync();
-        return (tokens.Create(user.Id, user.Email), null);
+        return (tokens.Create(user.Id, user.Email, user.Role), null);
     }
 
     public async Task<string?> LoginAsync(string email, string password)
     {
         var user = await db.Users.FirstOrDefaultAsync(u => u.Email == email);
         return user is not null && BCrypt.Net.BCrypt.Verify(password, user.PasswordHash)
-            ? tokens.Create(user.Id, user.Email) : null;
+            ? tokens.Create(user.Id, user.Email, user.Role) : null;
     }
 }

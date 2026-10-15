@@ -8,7 +8,7 @@ public class ScheduledTransferTests : IDisposable
 {
     static readonly DateTime Now = new(2026, 1, 15, 12, 0, 0, DateTimeKind.Utc);
     readonly TestDb t = new();
-    ScheduledTransferService Svc => new(t.Db, new TransferService(t.Db));
+    ScheduledTransferService Svc => new(t.Db, t.Transfers);
 
     public void Dispose() => t.Dispose();
 

@@ -10,11 +10,15 @@ public interface IWalletDb
     DbSet<Account> Accounts { get; }
     DbSet<Transfer> Transfers { get; }
     DbSet<ScheduledTransfer> ScheduledTransfers { get; }
+    DbSet<ComplianceFlag> ComplianceFlags { get; }
+    DbSet<Loan> Loans { get; }
+    DbSet<LoanInstallment> LoanInstallments { get; }
+    DbSet<CreditScoreSnapshot> CreditScoreSnapshots { get; }
     ChangeTracker ChangeTracker { get; }
     Task<int> SaveChangesAsync(CancellationToken ct = default);
 }
 
 public interface ITokenService
 {
-    string Create(Guid userId, string email);
+    string Create(Guid userId, string email, Role role);
 }
